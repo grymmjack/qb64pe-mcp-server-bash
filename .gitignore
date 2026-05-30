@@ -1,0 +1,6 @@
+# runtime logs (created by the MCP core's mkdir -p)
+logs/
+*.log
+
+# temp build artifacts from local testing
+*.enhanced.*

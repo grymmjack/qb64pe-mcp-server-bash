@@ -1,0 +1,144 @@
+{
+  "tools": [
+    {
+      "name": "wiki_page",
+      "description": "USE THIS FIRST when you need authoritative QB64PE keyword documentation. Fetches the COMPLETE QB64PE wiki page (raw wikitext) for a keyword or topic, including the full Syntax, Parameters, Description, Availability, and Examples sections. Prefer this over guessing keyword syntax.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "string",
+            "description": "Keyword or wiki page title, e.g. '_SETALPHA', '_LOADIMAGE', 'PRINT USING'. Spaces or underscores both work."
+          }
+        },
+        "required": ["page"]
+      }
+    },
+    {
+      "name": "wiki_search",
+      "description": "Search the QB64PE wiki for pages matching a query. Returns matching page titles and URLs. Use when you don't know the exact keyword/page name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Search terms, e.g. 'alpha transparency', 'mouse wheel'." },
+          "limit": { "type": "number", "description": "Max results (default 10)." }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "keyword_lookup",
+      "description": "Fast OFFLINE lookup of a QB64PE keyword from the bundled database (950 keywords): type, syntax, short description, an example, version and platform availability, plus the wiki URL. Use for a quick check; use wiki_page for full prose.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "keyword": { "type": "string", "description": "Exact or near keyword name, e.g. '_PUTIMAGE'. Case-insensitive." }
+        },
+        "required": ["keyword"]
+      }
+    },
+    {
+      "name": "lint",
+      "description": "USE THIS AFTER writing/changing QB64PE code. Two layers: (A) the QB64PE compiler's '-z -w' check (transpile only, no executable) — catches real syntax errors, reserved-word collisions, and .BM/.BI misplacement; fast for small files but transpiles the whole project for a large entry .BAS (~minutes), so use syntaxCheck:false for instant iteration and reserve the compiler layer as a pre-compile gate. (B) instant regex rules for runtime-semantic traps the compiler accepts but that crash/misbehave — most importantly the FUNCTION self-reference SIGSEGV. Returns findings with line numbers and fixes.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "Absolute path to a .bas/.bi/.bm file to lint." },
+          "code": { "type": "string", "description": "Inline code to lint (alternative to file). One of file or code is required." },
+          "projectEntry": { "type": "string", "description": "Optional: for a .bi/.bm fragment, the project's entry .BAS so the compiler check (-z) sees the full include chain. If omitted for a fragment, only the regex layer runs." },
+          "syntaxCheck": { "type": "boolean", "description": "Run the compiler -z layer (default true). Set false for regex-only (faster, no compiler needed)." },
+          "enforceDeclaration": { "type": "boolean", "description": "Add -e (enforce variable declaration) to the compiler check. Default false — only enable for code that uses OPTION _EXPLICIT, else it floods with false 'undeclared' errors." }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "inject_logging",
+      "description": "Insert native QB64PE logging scaffolding ($CONSOLE / $CONSOLE:ONLY directive + _LOGINFO/_LOGWARN/_LOGERROR calls and a startup banner) into a program so its output is capturable for automated debugging. Returns the enhanced code (never overwrites the source unless 'output' is given).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string", "description": "Absolute path to the source .bas to enhance." },
+          "code": { "type": "string", "description": "Inline code to enhance (alternative to file)." },
+          "mode": { "type": "string", "description": "'auto' (default): detect whether the program opens a graphics window and pick the safe directive — $CONSOLE for GUI programs (keeps the window), $CONSOLE:ONLY for text/console-only programs. 'graphics': force $CONSOLE (console + window). 'console': force $CONSOLE:ONLY (no window — warns if the source looks graphical, e.g. a GUI app like DRAW)." },
+          "output": { "type": "string", "description": "Optional path to WRITE the enhanced code to. If omitted, the enhanced code is only returned, not written." }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "compile",
+      "description": "Compile a QB64PE program headlessly with a real pty (so the compiler's TTY error display is preserved) and no artificial timeout. Runs unsandboxed so internal/temp writes are not blocked. Bakes in -w -x -m and MaxCompilerProcesses. Returns the full captured compiler output and infers success from exit code + output-file existence. NOTE: large projects take 2-5 minutes — that is normal. Run 'lint' first as a cheap pre-check.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "source": { "type": "string", "description": "Absolute path to the .BAS source file. (The 'file' param is accepted as an alias, matching lint/inject_logging.)" },
+          "file": { "type": "string", "description": "Alias for 'source' (so the path param name is uniform across tools)." },
+          "output": { "type": "string", "description": "Output executable path (-o). Defaults to source basename + platform exe suffix in the source dir." },
+          "maxProcesses": { "type": "number", "description": "MaxCompilerProcesses for parallel C++ compile (default 8)." },
+          "purge": { "type": "boolean", "description": "Add -p to purge precompiled content for a clean build (default false)." },
+          "extraFlags": { "type": "string", "description": "Optional additional raw flags appended verbatim (advanced)." }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "run_and_screenshot",
+      "description": "SAFE DEFAULT for automated verification: launch a compiled QB64PE executable, wait for its window to map, settle, capture a PNG, and GUARANTEE teardown of the program (kills its whole process group on every exit path — success, error, no-window, or window-closed-mid-capture). No window is ever stranded. Returns the saved PNG path; read it with the Read tool. Prefer this over run+screenshot+stop unless you need the window to stay open between calls.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "binary": { "type": "string", "description": "Absolute path to the compiled executable to run." },
+          "args": { "type": "string", "description": "Optional command-line arguments to pass to the program." },
+          "window": { "type": "string", "description": "Optional window _TITLE substring to match instead of looking up by PID (use if the program sets a custom _TITLE and PID lookup misses)." },
+          "output": { "type": "string", "description": "Output PNG path. Defaults to a timestamped file in the system temp dir." },
+          "delay": { "type": "number", "description": "Seconds to wait after the window appears before capturing (default 1.5; floor 1.0). This is ALSO your past-the-intro wait: if the program shows a splash/intro that holds for N seconds, set delay beyond it or you'll capture the splash, not the app (e.g. DRAW's splash → use delay ~6)." },
+          "maxWaitSeconds": { "type": "number", "description": "How long to wait for the window to APPEAR before giving up (default 10). Note: a splash window appears immediately, so this won't skip past it — use 'delay' for that." }
+        },
+        "required": ["binary"]
+      }
+    },
+    {
+      "name": "run",
+      "description": "Launch a compiled QB64PE executable detached (in its OWN process group via setsid) and return its PID and X11 window id for subsequent screenshotting. Does not block. Installs a self-terminating backstop (default 120s) so an automated caller can never strand a window; pass lifetimeSeconds:0 to disable. Tear down explicitly with 'stop' {pid}. For a one-shot capture, prefer 'run_and_screenshot'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "binary": { "type": "string", "description": "Absolute path to the compiled executable to run." },
+          "args": { "type": "string", "description": "Optional command-line arguments to pass to the program (e.g. '--developer')." },
+          "lifetimeSeconds": { "type": "number", "description": "Auto-stop the program's process group after this many seconds (default 120). Pass 0 to disable the backstop (then you MUST call 'stop')." }
+        },
+        "required": ["binary"]
+      }
+    },
+    {
+      "name": "stop",
+      "description": "Tear down a program launched by 'run', by the integer PID it returned. Kills the whole process group (SIGTERM then SIGKILL) so any child the program spawned dies too. Kills by integer PID/PGID only — never by command-line match. Idempotent (safe to call if already stopped).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "pid": { "type": "number", "description": "The integer PID returned by 'run' (which is also its process-group id)." }
+        },
+        "required": ["pid"]
+      }
+    },
+    {
+      "name": "screenshot",
+      "description": "Capture a screenshot of a running QB64PE window using the timing-correct recipe (activate window, release keys, settle ~1.5s, then capture) and SAVE it to a PNG file. Verifies the target window is still alive before and at capture time, and rejects zero-byte captures (window closed early) instead of silently saving a broken PNG. Returns the file path — read it with the Read tool to view the image. Avoids the file-size-comparison trap; compare visible content. Cross-platform: a numeric window ref works on any OS; name/active-window lookup is X11-only — on macOS/Windows use run_and_screenshot (resolves by PID).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "window": { "type": "string", "description": "Window reference: an X11 window id / Windows HWND (e.g. from 'run'), or on Linux a window name/title substring to search for. If omitted, captures the most recently activated window (Linux/X11)." },
+          "output": { "type": "string", "description": "Output PNG path. Defaults to a timestamped file in the system temp dir." },
+          "delay": { "type": "number", "description": "Settle delay in seconds before capture (default 1.5; do not go below 1.0 — DRAW idles ~15 FPS). If the program holds a splash/intro screen, set this past the hold (e.g. DRAW → ~6) or you'll capture the splash." }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "doctor",
+      "description": "Report this machine's cross-platform capabilities for the GUI tools: detected OS (linux/macOS/windows, incl. WSL), the QB64PE compiler path, and whether the per-OS pieces for launch/teardown/window-control/capture are present (with install hints for anything missing). Use it to check whether run/stop/run_and_screenshot/screenshot will work here before relying on them. The docs/lint/compile tools work without any of the GUI pieces.",
+      "inputSchema": { "type": "object", "properties": {}, "required": [] }
+    }
+  ]
+}
