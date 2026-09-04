@@ -61,7 +61,31 @@ This server addresses those directly:
 > occlusion, or settle-timing concerns. It needs a source hook (e.g. a `--screenshot` dev flag after
 > the first `_DISPLAY`); the X11 `run_and_screenshot` path is the no-recompile fallback for any binary.
 
-## Install (Claude Code / `.mcp.json`)
+## Setup
+
+The server is a self-contained bash script — no build step, no Node, no `npm install`. You point an
+MCP client at `qb64pe_mcp_server.sh` and that's it. The walkthrough below is for Claude Code; any MCP
+client that can launch a stdio command works the same way.
+
+### 1. Install the prerequisites
+
+Install the tools for the features you want (see [Requirements](#requirements)). The bare minimum is
+`bash` + `jq`; `qb64pe` unlocks `lint`/`compile`, and the GUI tools need the per-OS window/capture
+stack. You don't have to guess what's missing — once the server is registered (step 3), run the
+**`doctor`** tool and it reports exactly what's present and what to install.
+
+### 2. Make the entry point executable
+
+Git usually preserves the executable bit, but on a fresh clone:
+
+```bash
+chmod +x qb64pe_mcp_server.sh mcpserver_core.sh
+```
+
+### 3. Register the server
+
+Create a `.mcp.json` at the root of the project you open Claude Code in. Adjust the two paths to wherever
+you cloned this repo and where your QB64PE compiler lives:
 
 ```json
 {
@@ -77,8 +101,31 @@ This server addresses those directly:
 }
 ```
 
-> Set a generous `MCP_TOOL_TIMEOUT` (e.g. 600000 ms) so long project compiles are never cut off —
-> that was the root cause of the old compile tool's false failures.
+> **`MCP_TOOL_TIMEOUT`** — set a generous value (e.g. `600000` ms = 10 min) so long project compiles are
+> never cut off. A too-short timeout was the root cause of the old compile tool's false failures.
+
+> **`QB64PE_BIN`** — optional. If omitted, the server discovers the compiler via `$PATH` and common
+> install dirs. Set it to pin a specific build (e.g. v4.5.0 at `.../qb64pe-450/qb64pe`).
+
+> **Keep it out of git.** Because `command` is an absolute, machine-specific path, you usually don't
+> want `.mcp.json` in version control. Add `/.mcp.json` to the project's `.gitignore` — it stays on
+> disk and active, but git won't track it.
+
+**Where `.mcp.json` can live** (Claude Code merges MCP servers from several scopes):
+
+| Location | Scope | How to add |
+|----------|-------|------------|
+| `<project>/.mcp.json` | this project | create the file above |
+| `~/.claude.json` | all your projects (user scope) | `claude mcp add qb64pe /path/to/qb64pe_mcp_server.sh -e QB64PE_BIN=/path/to/qb64pe -s user` |
+| project-local | this project, private to you | same `claude mcp add …` but `-s local` |
+
+Run `claude mcp add --help` for the exact flags on your CLI version.
+
+### 4. Reload and verify
+
+Restart Claude Code (or use `/mcp` to reconnect), then call the **`doctor`** tool. A healthy setup
+reports the detected OS, the resolved compiler path, and `[ok]` for the launch/teardown/window/capture
+pieces. If a tool errors, `doctor`'s install hints tell you what's missing.
 
 ## Layout
 
