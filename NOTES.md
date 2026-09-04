@@ -2,43 +2,57 @@
 
 Durable notes so we don't re-learn the same things. OS-stamped per the repo convention.
 
-## [Linux] `qb64pe -z <ENTRY>.BAS` is a fast, reliable syntax gate (2026-09-04)
+## [Linux] CORRECTION: `-z` is NOT a faster error-gate than `-x` (2026-09-04)
 
-Working on the DRAW project (a ~170k-line QB64-PE codebase, entry `DRAW.BAS`):
+An earlier version of this note claimed `qb64pe -z DRAW.BAS` is "~8× faster" and a great
+pre-build syntax gate. **That was a bad comparison** (a *failed*, short-circuited `-z` vs a
+*successful* full `-x`). Corrected understanding, verified on the DRAW project (~170k lines):
 
-- **`qb64pe -z DRAW.BAS`** (transpile BASIC→C++ only, no g++/link) measured **~100s**
-  vs **~13min** for the full `qb64pe -x DRAW.BAS` build — **~8× faster** — and it is
-  **reliable**: it walks the same include chain + preprocessor state as `-x`, so a clean
-  `-z` means the real build's front-end is clean, and any `-z` error is a real `-x` error.
-  It catches the whole syntax / reserved-word / string-literal / arg-count class.
-  → Recommend `-z <entry>.BAS` as the everyday pre-build gate.
+- A qb64pe build is **two phases: (1) transpile** BASIC→C++ (the progress-bar phase), then
+  **(2) g++** compile+link of the generated C++ (the "Compiling C++ code into executable…"
+  phase — the bulk of the time).
+- **Syntax / reserved-word / string-literal / arg-count errors are caught in phase 1.**
+- **`-x` short-circuits at phase 1 on such errors — it never reaches g++.** VERIFIED: every
+  failed `-x` build (`out` collision, `""` non-escape, `Foo$()` no-arg parens) produced NO
+  "Compiling C++…" line; each aborted during transpile in ~1–2 min.
+- Therefore a **failing `-x` ≈ a failing `-z`** (same phase, same time). `-z` gives **no**
+  error-catching speed advantage. It only skips g++ on a **clean** compile (nothing to catch)
+  and produces no binary — useful for a CI "does it fully transpile?" check, not iterative dev.
+- **Recommendation:** for dev, just run `-x` — it fails as fast as `-z` on a syntax error AND
+  yields a runnable binary on success. Don't add a `-z` pre-gate.
 
-- Errors it caught in one session (each ~100s vs a failed ~13min build): `out` used as a
-  variable (collides with the `OUT` statement); `""` inside a string is NOT an escaped
-  quote in QB64-PE (it reads two juxtaposed literals — use single quotes in HTML or
-  `CHR$(34)`); a no-arg `FUNCTION Foo$` must be CALLED without parens (`Foo$`, not `Foo$()`).
+## [Linux] The real build-speed lever: skip C++ `-O` for dev builds
 
-### ⚠️ Divergence to investigate in `lib/lint.sh`
+The multi-minute cost is g++ optimizing (a) QB64-PE's own runtime `internal/c/qbx.cpp` and
+(b) the single giant generated `.cpp` from the whole program. Both are single compilation
+units, so `-f:MaxCompilerProcesses` barely helps. What helps:
 
-The `lint` tool's Layer A, given `projectEntry: DRAW.BAS`, runs
-`qb64pe -z $eflag -w -m -q DRAW.BAS` (lib/lint.sh:28, target set at :131-132). In that
-session it reported a **spurious** error — `Invalid variable name … T0 = _UPTIME` in the
-**untouched** `CORE/PERF.BM` — that a **plain `qb64pe -z DRAW.BAS` (no `-w -m -q`) does NOT
-produce** (the plain run sailed past PERF.BM and flagged only the real errors in the edited
-file). So the added flags (most likely `-w`, possibly `$eflag`/`-e`) appear to change error
-reporting vs. a plain `-z`. Until this is pinned down, prefer a plain `qb64pe -z <entry>.BAS`
-for a trustworthy compiler gate on a large project; treat the tool's projectEntry Layer-A
-output with suspicion when it flags a file you did not touch.
+- **`-f:OptimizeCppProgram=false`** — skip `-O` for dev/test builds. On DRAW this cut a full
+  build from **~13min → ~7min even while paying a one-time runtime rebuild** (warm-cache dev
+  builds are faster still). Ship builds keep optimization on.
+- **Flag consistency keeps the `qbx.o` runtime cache warm.** Changing `-f` flags between builds
+  invalidates the cache and forces a full `qbx.cpp` recompile. Pick one dev flag set and stick
+  to it so the runtime is compiled once and reused.
 
-Also note (already known): Layer B's "self-reference SIGSEGV" regex FALSE-flags every
-`CASE x : FUNC$ = "..."` assignment — those are FUNCTION returns (LHS), not recursive reads
-(RHS). The rule should not fire when the function name is the assignment target.
+## ⚠️ `lib/lint.sh` fragment-mode Layer-A is unreliable
 
-### Future: per-file gate via an include DAG
+Given `projectEntry: DRAW.BAS`, Layer A runs `qb64pe -z $eflag -w -m -q DRAW.BAS`
+(lib/lint.sh:28, target set :131-132). It reported a **spurious** `Invalid variable name …
+T0 = _UPTIME` in the **untouched** `CORE/PERF.BM` that a plain `qb64pe -z DRAW.BAS` (no
+`-w -m -q`) does NOT produce. Suspect the added flags. Until pinned down, prefer a plain
+`qb64pe -z <entry>.BAS`, and distrust projectEntry Layer-A output that flags a file you did
+not touch. Also: Layer B's "self-reference SIGSEGV" regex FALSE-flags every
+`CASE x : FUNC$ = "..."` assignment (those are returns/LHS, not recursive reads/RHS).
 
-To gate a single `.BM` in seconds (not 100s), build a symbol→file dependency graph and
-generate a minimal harness: all `.BI` (declarations are cheap) + the target `.BM` +
-`DECLARE`s for the cross-`.BM` SUB/FUNCTIONs it calls (QB64 `-z` errors on an undefined
-SUB, so the callees need bodies or DECLAREs). Watch QB64's finicky non-LIBRARY `DECLARE`
-and `$INCLUDEONCE` path normalization. Would let the tool's fragment mode be both fast and
-false-positive-free.
+## Idea: a real QB64-PE linter belongs INSIDE the compiler
+
+The valuable checks (self-ref-read, reserved-word collisions, `AND`/`OR` non-short-circuit,
+`NOT` bitwise, no-arg parens) are **semantic** — they need real name+type resolution, which
+lives in the compiler's own parser/symbol table. An external regex tool has false positives
+precisely because it lacks that. Two good paths, both avoiding a reimplemented parser:
+1. Have the compiler **emit its AST/symbol table** (JSON) during `-z`; any tool (Rust, etc.)
+   analyzes that with zero reparse and zero drift.
+2. Add a native **`-l` lint** mode that runs the real front-end and walks the parsed tree.
+A clean-room Rust+AST linter is the highest-effort path (you own a full QB64 parser forever,
+which drifts from the real compiler). Curate the **rule catalog** first — it outlives any
+engine choice — then pick 1 or 2.
